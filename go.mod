@@ -3,7 +3,6 @@ module github.com/malsuke/PRalyzer
 go 1.25.0
 
 require (
-	github.com/google/go-github/v58 v58.0.0
 	github.com/google/go-github/v77 v77.0.0
 	github.com/stretchr/testify v1.11.1
 )
