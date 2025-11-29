@@ -33,6 +33,18 @@ func TestParseRepository(t *testing.T) {
 			repo:  "repo",
 		},
 		{
+			name:  "PR URL",
+			input: "https://github.com/owner/repo/pull/123",
+			owner: "owner",
+			repo:  "repo",
+		},
+		{
+			name:  "Issue URL",
+			input: "https://github.com/owner/repo/issues/456",
+			owner: "owner",
+			repo:  "repo",
+		},
+		{
 			name:    "invalid",
 			input:   "owner-only",
 			wantErr: true,

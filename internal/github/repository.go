@@ -48,16 +48,19 @@ func ParseRepositoryURL(u *url.URL) (string, string, error) {
 		return "", "", fmt.Errorf("url must not be nil")
 	}
 
-	// take path portion /owner/name(.git)
 	path := strings.Trim(u.Path, "/")
 	if path == "" {
 		return "", "", fmt.Errorf("repository path is empty in url %s", u.String())
 	}
 
-	owner, name, err := parseOwnerAndName(path)
-	if err != nil {
-		return "", "", err
+	parts := strings.Split(path, "/")
+	if len(parts) < 2 {
+		return "", "", fmt.Errorf("repository path must contain owner and name: %s", path)
 	}
+
+	owner := strings.TrimSpace(parts[0])
+	name := strings.TrimSpace(parts[1])
+
 	return owner, name, ValidateRepository(owner, name)
 }
 

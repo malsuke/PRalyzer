@@ -13,7 +13,7 @@ import (
 func (c *Client) SearchPullRequestsWithCommentKeyword(keyword string) ([]*github.PullRequest, error) {
 	ctx := context.Background()
 
-	query := fmt.Sprintf("is:pr repo:%s/%s comment:%s", c.Owner, c.Name, keyword)
+	query := fmt.Sprintf("repo:%s/%s in:comments type:pr %s", c.Owner, c.Name, keyword)
 
 	var allPRs []*github.PullRequest
 	page := 1
