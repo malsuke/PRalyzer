@@ -53,16 +53,30 @@ func main() {
 	for _, word := range words {
 		fmt.Printf("\n=== Processing keyword: %s ===\n", word)
 
-		// 1. キーワードでPRを検索
-		prs, err := client.SearchPullRequestsWithCommentKeyword(word)
-		if err != nil {
-			if isRateLimitError(err) {
-				log.Printf("Rate limit exceeded while searching PRs with keyword '%s'. Stopping.", word)
-				log.Printf("Tip: Provide a GitHub PAT to increase rate limits.")
-				break
+		// 1. キーワードでPRを検索（リトライループ）
+		var prs []*gh.PullRequest
+		var err error
+		for {
+			prs, err = client.SearchPullRequestsWithCommentKeyword(word)
+			if err != nil {
+				if isRateLimitError(err) {
+					log.Printf("Rate limit exceeded while searching PRs with keyword '%s'.", word)
+					// 処理済みPR番号を保存
+					if err := saveProcessedPRs(processedPRsFile, processedPRs); err != nil {
+						log.Printf("Failed to save processed PRs: %v", err)
+					}
+					// 90分待機してからリトライ
+					waitForRateLimit(90 * time.Minute)
+					continue // リトライ
+				}
+				log.Printf("Failed to search PRs with keyword '%s': %v", word, err)
+				break // エラーがレート制限以外の場合はループを抜ける
 			}
-			log.Printf("Failed to search PRs with keyword '%s': %v", word, err)
-			continue
+			break // 成功したらループを抜ける
+		}
+
+		if err != nil {
+			continue // エラーが残っている場合は次のキーワードへ
 		}
 
 		if len(prs) == 0 {
@@ -96,19 +110,30 @@ func main() {
 
 			fmt.Printf("Fetching comments for PR #%d\n", prNumber)
 
-			comments, err := client.GetComments(prNumber)
-			if err != nil {
-				if isRateLimitError(err) {
-					log.Printf("Rate limit exceeded while fetching comments for PR #%d. Stopping keyword '%s'.", prNumber, word)
-					log.Printf("Tip: Provide a GitHub PAT to increase rate limits.")
-					// 処理済みPR番号を保存してから終了
-					if err := saveProcessedPRs(processedPRsFile, processedPRs); err != nil {
-						log.Printf("Failed to save processed PRs: %v", err)
+			// コメント取得（リトライループ）
+			var comments []*gh.IssueComment
+			for {
+				var err error
+				comments, err = client.GetComments(prNumber)
+				if err != nil {
+					if isRateLimitError(err) {
+						log.Printf("Rate limit exceeded while fetching comments for PR #%d.", prNumber)
+						// 処理済みPR番号を保存
+						if err := saveProcessedPRs(processedPRsFile, processedPRs); err != nil {
+							log.Printf("Failed to save processed PRs: %v", err)
+						}
+						// 90分待機してからリトライ
+						waitForRateLimit(90 * time.Minute)
+						continue // リトライ
 					}
-					return
+					log.Printf("Failed to get comments for PR #%d: %v", prNumber, err)
+					break // エラーがレート制限以外の場合はループを抜ける
 				}
-				log.Printf("Failed to get comments for PR #%d: %v", prNumber, err)
-				continue
+				break // 成功したらループを抜ける
+			}
+
+			if comments == nil {
+				continue // エラーが残っている場合は次のPRへ
 			}
 
 			// JSONファイルに書き込む
@@ -208,14 +233,32 @@ func isRateLimitError(err error) bool {
 	return false
 }
 
-// waitForRateLimitReset はレート制限がリセットされるまで待機する（オプション機能）
-func waitForRateLimitReset(err error) {
-	if rateLimitErr, ok := err.(*gh.RateLimitError); ok {
-		resetTime := rateLimitErr.Rate.Reset.Time
-		waitDuration := time.Until(resetTime)
-		if waitDuration > 0 {
-			log.Printf("Waiting %v for rate limit reset...", waitDuration)
-			time.Sleep(waitDuration)
+// waitForRateLimit は指定時間待機する（レート制限リセット待ち）
+func waitForRateLimit(waitDuration time.Duration) {
+	log.Printf("Waiting %v for rate limit reset before resuming...", waitDuration)
+
+	// 待機中は定期的に進捗を表示
+	ticker := time.NewTicker(10 * time.Minute)
+	defer ticker.Stop()
+
+	done := make(chan bool)
+	go func() {
+		time.Sleep(waitDuration)
+		done <- true
+	}()
+
+	elapsed := time.Duration(0)
+	for {
+		select {
+		case <-done:
+			log.Printf("Rate limit wait completed. Resuming processing...")
+			return
+		case <-ticker.C:
+			elapsed += 10 * time.Minute
+			remaining := waitDuration - elapsed
+			if remaining > 0 {
+				log.Printf("Still waiting... %v remaining", remaining)
+			}
 		}
 	}
 }
