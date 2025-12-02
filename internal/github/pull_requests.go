@@ -9,13 +9,14 @@ import (
 
 /**
  * /search/issueを使ってコメントにkeywordが含まれるPRを検索する
+ * PR番号のスライスを返す（API呼び出しを削減するため、完全なPRオブジェクトは取得しない）
  */
-func (c *Client) SearchPullRequestsWithCommentKeyword(keyword string) ([]*github.PullRequest, error) {
+func (c *Client) SearchPullRequestsWithCommentKeyword(keyword string) ([]int, error) {
 	ctx := context.Background()
 
 	query := fmt.Sprintf("repo:%s/%s in:comments type:pr %s", c.Owner, c.Name, keyword)
 
-	var allPRs []*github.PullRequest
+	var allPRNumbers []int
 	page := 1
 	perPage := 100
 
@@ -37,11 +38,11 @@ func (c *Client) SearchPullRequestsWithCommentKeyword(keyword string) ([]*github
 				continue
 			}
 
-			pr, _, err := c.github.PullRequests.Get(ctx, c.Owner, c.Name, *issue.Number)
-			if err != nil {
-				return nil, fmt.Errorf("failed to get pull request #%d: %w", *issue.Number, err)
+			if issue.Number == nil {
+				continue
 			}
-			allPRs = append(allPRs, pr)
+
+			allPRNumbers = append(allPRNumbers, *issue.Number)
 		}
 
 		if resp.NextPage == 0 {
@@ -50,5 +51,5 @@ func (c *Client) SearchPullRequestsWithCommentKeyword(keyword string) ([]*github
 		page = resp.NextPage
 	}
 
-	return allPRs, nil
+	return allPRNumbers, nil
 }

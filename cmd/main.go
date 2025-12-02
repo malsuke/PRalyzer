@@ -54,10 +54,10 @@ func main() {
 		fmt.Printf("\n=== Processing keyword: %s ===\n", word)
 
 		// 1. キーワードでPRを検索（リトライループ）
-		var prs []*gh.PullRequest
+		var prNumbers []int
 		var err error
 		for {
-			prs, err = client.SearchPullRequestsWithCommentKeyword(word)
+			prNumbers, err = client.SearchPullRequestsWithCommentKeyword(word)
 			if err != nil {
 				if isRateLimitError(err) {
 					log.Printf("Rate limit exceeded while searching PRs with keyword '%s'.", word)
@@ -79,12 +79,12 @@ func main() {
 			continue // エラーが残っている場合は次のキーワードへ
 		}
 
-		if len(prs) == 0 {
+		if len(prNumbers) == 0 {
 			fmt.Printf("No PRs found for keyword '%s'. Skipping.\n", word)
 			continue
 		}
 
-		fmt.Printf("Found %d PRs for keyword '%s'\n", len(prs), word)
+		fmt.Printf("Found %d PRs for keyword '%s'\n", len(prNumbers), word)
 
 		// 2. キーワードごとのディレクトリを作成
 		keywordDir := filepath.Join(baseDataDir, word)
@@ -95,12 +95,7 @@ func main() {
 
 		// 3. 各PRのコメントを取得してファイルに保存
 		processedInThisKeyword := 0
-		for _, pr := range prs {
-			if pr.Number == nil {
-				continue
-			}
-
-			prNumber := *pr.Number
+		for _, prNumber := range prNumbers {
 
 			// 既に処理済みのPRはスキップ
 			if processedPRs[prNumber] {
