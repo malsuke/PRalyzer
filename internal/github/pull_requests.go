@@ -14,7 +14,7 @@ import (
 func (c *Client) SearchPullRequestsWithCommentKeyword(keyword string) ([]int, error) {
 	ctx := context.Background()
 
-	query := fmt.Sprintf("repo:%s/%s in:comments type:pr %s", c.Owner, c.Name, keyword)
+	query := fmt.Sprintf("repo:%s/%s in:comments type:pr is:merged %s", c.Owner, c.Name, keyword)
 
 	var allPRNumbers []int
 	page := 1
