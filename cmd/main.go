@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -105,14 +106,14 @@ func main() {
 
 			fmt.Printf("Fetching comments for PR #%d\n", prNumber)
 
-			// コメント取得（リトライループ）
-			var comments []*gh.IssueComment
+			// Issue Comments取得（リトライループ）
+			var issueComments []*gh.IssueComment
 			for {
 				var err error
-				comments, err = client.GetComments(prNumber)
+				issueComments, err = client.GetComments(prNumber)
 				if err != nil {
 					if isRateLimitError(err) {
-						log.Printf("Rate limit exceeded while fetching comments for PR #%d.", prNumber)
+						log.Printf("Rate limit exceeded while fetching issue comments for PR #%d.", prNumber)
 						// 処理済みPR番号を保存
 						if err := saveProcessedPRs(processedPRsFile, processedPRs); err != nil {
 							log.Printf("Failed to save processed PRs: %v", err)
@@ -121,19 +122,48 @@ func main() {
 						waitForRateLimit(90 * time.Minute)
 						continue // リトライ
 					}
-					log.Printf("Failed to get comments for PR #%d: %v", prNumber, err)
+					log.Printf("Failed to get issue comments for PR #%d: %v", prNumber, err)
 					break // エラーがレート制限以外の場合はループを抜ける
 				}
 				break // 成功したらループを抜ける
 			}
 
-			if comments == nil {
-				continue // エラーが残っている場合は次のPRへ
+			// Review Comments取得（リトライループ）
+			var reviewComments []*gh.PullRequestComment
+			for {
+				var err error
+				reviewComments, err = client.GetReviewComments(prNumber)
+				if err != nil {
+					if isRateLimitError(err) {
+						log.Printf("Rate limit exceeded while fetching review comments for PR #%d.", prNumber)
+						// 処理済みPR番号を保存
+						if err := saveProcessedPRs(processedPRsFile, processedPRs); err != nil {
+							log.Printf("Failed to save processed PRs: %v", err)
+						}
+						// 90分待機してからリトライ
+						waitForRateLimit(90 * time.Minute)
+						continue // リトライ
+					}
+					log.Printf("Failed to get review comments for PR #%d: %v", prNumber, err)
+					break // エラーがレート制限以外の場合はループを抜ける
+				}
+				break // 成功したらループを抜ける
 			}
+
+			// 両方のコメントが空の場合はスキップ
+			if len(issueComments) == 0 && len(reviewComments) == 0 {
+				fmt.Printf("No comments found for PR #%d. Skipping.\n", prNumber)
+				// 処理済みとしてマーク（コメントがない場合も処理済みとする）
+				processedPRs[prNumber] = true
+				continue
+			}
+
+			// コメントを時系列順にソート
+			sortCommentsByTime(issueComments, reviewComments)
 
 			// JSONファイルに書き込む
 			outputPath := filepath.Join(keywordDir, fmt.Sprintf("%d.json", prNumber))
-			if err := writeCommentsToFile(comments, outputPath); err != nil {
+			if err := writeCommentsToFile(issueComments, reviewComments, outputPath); err != nil {
 				log.Printf("Failed to write comments to file for PR #%d: %v", prNumber, err)
 				continue
 			}
@@ -183,9 +213,20 @@ func loadWordList(filename string) ([]string, error) {
 	return words, nil
 }
 
+// PRComments はIssue CommentsとReview Commentsを保持する構造体
+type PRComments struct {
+	IssueComments  []*gh.IssueComment       `json:"issue_comments"`
+	ReviewComments []*gh.PullRequestComment `json:"review_comments"`
+}
+
 // writeCommentsToFile はコメントをJSONファイルに書き込む
-func writeCommentsToFile(comments []*gh.IssueComment, filepath string) error {
-	data, err := json.MarshalIndent(comments, "", "  ")
+func writeCommentsToFile(issueComments []*gh.IssueComment, reviewComments []*gh.PullRequestComment, filepath string) error {
+	prComments := PRComments{
+		IssueComments:  issueComments,
+		ReviewComments: reviewComments,
+	}
+
+	data, err := json.MarshalIndent(prComments, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal comments: %w", err)
 	}
@@ -195,6 +236,25 @@ func writeCommentsToFile(comments []*gh.IssueComment, filepath string) error {
 	}
 
 	return nil
+}
+
+// sortCommentsByTime はコメントを時系列順にソートする
+func sortCommentsByTime(issueComments []*gh.IssueComment, reviewComments []*gh.PullRequestComment) {
+	// Issue Commentsを時系列順にソート
+	sort.Slice(issueComments, func(i, j int) bool {
+		if issueComments[i].CreatedAt == nil || issueComments[j].CreatedAt == nil {
+			return false
+		}
+		return issueComments[i].CreatedAt.Time.Before(issueComments[j].CreatedAt.Time)
+	})
+
+	// Review Commentsを時系列順にソート
+	sort.Slice(reviewComments, func(i, j int) bool {
+		if reviewComments[i].CreatedAt == nil || reviewComments[j].CreatedAt == nil {
+			return false
+		}
+		return reviewComments[i].CreatedAt.Time.Before(reviewComments[j].CreatedAt.Time)
+	})
 }
 
 // isRateLimitError はエラーがレート制限エラーかどうかを判定する
