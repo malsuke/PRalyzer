@@ -16,3 +16,14 @@ func (c *Client) GetComments(prNumber int) ([]*github.IssueComment, error) {
 	}
 	return comments, nil
 }
+
+/**
+ * pulls/<prNumber>/commentsエンドポイントを使ってレビューコメントを取得する
+ */
+func (c *Client) GetReviewComments(prNumber int) ([]*github.PullRequestComment, error) {
+	comments, _, err := c.github.PullRequests.ListComments(context.Background(), c.Owner, c.Name, prNumber, &github.PullRequestListCommentsOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return comments, nil
+}
