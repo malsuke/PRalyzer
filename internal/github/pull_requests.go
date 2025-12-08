@@ -67,6 +67,8 @@ func (c *Client) ListAllPullRequests() ([]*github.PullRequest, error) {
 	page := 1
 	perPage := 100
 
+	fmt.Printf("Starting to fetch pull requests...\n")
+
 	for {
 		var prs []*github.PullRequest
 		var resp *github.Response
@@ -82,13 +84,15 @@ func (c *Client) ListAllPullRequests() ([]*github.PullRequest, error) {
 				},
 			}
 
+			fmt.Printf("Fetching page %d (per page: %d)...\n", page, perPage)
 			prs, resp, err = c.github.PullRequests.List(ctx, c.Owner, c.Name, opts)
 			if err != nil {
 				if isRateLimitError(err) {
 					// レート制限エラーの場合、1時間5分待機してからリトライ
 					waitDuration := 65 * time.Minute // 1時間5分
-					fmt.Printf("Rate limit exceeded. Waiting %v before retrying...\n", waitDuration)
+					fmt.Printf("\n⚠️  Rate limit exceeded. Waiting %v before retrying page %d...\n", waitDuration, page)
 					waitForRateLimit(waitDuration)
+					fmt.Printf("Retrying page %d...\n", page)
 					continue // リトライ
 				}
 				return nil, fmt.Errorf("failed to list pull requests: %w", err)
@@ -97,8 +101,10 @@ func (c *Client) ListAllPullRequests() ([]*github.PullRequest, error) {
 		}
 
 		allPRs = append(allPRs, prs...)
+		fmt.Printf("  ✓ Fetched %d PRs from page %d (total: %d PRs)\n", len(prs), page, len(allPRs))
 
 		if resp.NextPage == 0 {
+			fmt.Printf("Reached last page. Total PRs fetched: %d\n", len(allPRs))
 			break
 		}
 		page = resp.NextPage
