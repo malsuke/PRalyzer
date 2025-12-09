@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -16,6 +17,9 @@ import (
 const (
 	processedPRBufferSize = 100
 )
+
+// RateLimitError はレート制限エラー（429）を表す
+var RateLimitError = errors.New("rate limit exceeded (429)")
 
 func main() {
 	if len(os.Args) < 4 {
@@ -41,6 +45,13 @@ func main() {
 	prBuffer := newProcessedPRBuffer(indexFile)
 
 	if err := processDirectory(inputDir, client, outputFile, processedPRs, prBuffer); err != nil {
+		if errors.Is(err, RateLimitError) {
+			// 429エラーの場合は処理済みPRを保存してから終了
+			if flushErr := prBuffer.flush(); flushErr != nil {
+				log.Printf("⚠️  Failed to flush processed PRs: %v", flushErr)
+			}
+			log.Fatalf("🛑 Rate limit exceeded (429). Processing stopped.\n   Processed PRs have been saved. You can resume later.")
+		}
 		log.Fatalf("Failed to process directory: %v", err)
 	}
 
@@ -75,7 +86,18 @@ func processDirectory(inputDir string, client *openai.Client, outputFile string,
 			return nil
 		}
 
-		result := processPRFile(path, prNumber, client)
+		result, err := processPRFile(path, prNumber, client)
+		if err != nil {
+			if errors.Is(err, RateLimitError) {
+				// 429エラーの場合は処理を停止
+				log.Printf("🛑 Rate limit exceeded (429) for PR #%d. Stopping processing.", prNumber)
+				return err
+			}
+			log.Printf("⚠️  Failed to process PR #%d: %v", prNumber, err)
+			// その他のエラーは空の結果を記録して続行
+			result = createEmptyResult(prNumber)
+		}
+
 		if err := appendResultJSONL(outputFile, result); err != nil {
 			log.Printf("⚠️  Failed to write result for PR #%d: %v", prNumber, err)
 			return nil
@@ -115,19 +137,24 @@ func extractPRNumber(filePath string) (int, error) {
 	return prNumber, nil
 }
 
-func processPRFile(filePath string, prNumber int, client *openai.Client) openai.VulnerabilityDetectionResult {
+func processPRFile(filePath string, prNumber int, client *openai.Client) (openai.VulnerabilityDetectionResult, error) {
 	fmt.Printf("Processing PR #%d: %s\n", prNumber, filePath)
 
 	conversationJSON, err := readAndValidateJSON(filePath)
 	if err != nil {
 		log.Printf("⚠️  Failed to read/validate JSON for PR #%d: %v", prNumber, err)
-		return createEmptyResult(prNumber)
+		return createEmptyResult(prNumber), nil
 	}
 
 	result, err := client.DetectVulnerabilityDiscussion(conversationJSON)
 	if err != nil {
+		// 429エラーを検出
+		if isRateLimitError(err) {
+			log.Printf("⚠️  Rate limit exceeded (429) for PR #%d", prNumber)
+			return openai.VulnerabilityDetectionResult{}, RateLimitError
+		}
 		log.Printf("⚠️  Failed to detect vulnerability discussion for PR #%d: %v", prNumber, err)
-		return createEmptyResult(prNumber)
+		return createEmptyResult(prNumber), nil
 	}
 
 	fmt.Printf("  ✓ Completed PR #%d\n", prNumber)
@@ -136,7 +163,7 @@ func processPRFile(filePath string, prNumber int, client *openai.Client) openai.
 		PR:                 prNumber,
 		RelevantDiscussion: result.RelevantDiscussion,
 		Reason:             result.Reason,
-	}
+	}, nil
 }
 
 func readAndValidateJSON(filePath string) ([]byte, error) {
@@ -309,4 +336,25 @@ func countProcessedPRs(outputFile string) int {
 	}
 
 	return count
+}
+
+// isRateLimitError はエラーがレート制限エラー（429）かどうかを判定する
+func isRateLimitError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	errStr := err.Error()
+
+	// HTTPレスポンスエラーの場合
+	if strings.Contains(errStr, "429") {
+		return true
+	}
+
+	// レート制限エラーメッセージをチェック
+	if strings.Contains(strings.ToLower(errStr), "rate limit") {
+		return true
+	}
+
+	return false
 }
