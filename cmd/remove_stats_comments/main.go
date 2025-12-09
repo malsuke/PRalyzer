@@ -28,7 +28,7 @@ type ReviewComment struct {
 }
 
 func main() {
-	outputDir := "output"
+	outputDir := "data"
 
 	if _, err := os.Stat(outputDir); os.IsNotExist(err) {
 		log.Fatalf("Output directory does not exist: %s", outputDir)
